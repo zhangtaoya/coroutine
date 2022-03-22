@@ -113,7 +113,7 @@ func GetGidByCache() uint64 {
 		return getGoidByStack()
 	}
 
-	if val, ok := addrGid.GetVal(addr); ok && val != nil {
+	if val, _ := addrGid.GetVal(addr); !IsNilValue(val) {
 		gid := val.(uint64)
 		return gid
 	}
@@ -140,8 +140,8 @@ func SetVal(k string, val interface{}) {
 	glsDataLock.Lock()
 	defer glsDataLock.Unlock()
 
-	dataRaw, ok := glsData.GetVal(gid)
-	if !ok {
+	dataRaw, _ := glsData.GetVal(gid)
+	if IsNilValue(dataRaw) {
 		dataRaw = make(map[string]interface{})
 	}
 
@@ -153,8 +153,8 @@ func SetVal(k string, val interface{}) {
 func GetVal(k string) (gid uint64, val interface{}, ok bool) {
 	gid = GetCoid()
 
-	dataRaw, ok := glsData.GetVal(gid)
-	if !ok {
+	dataRaw, _ := glsData.GetVal(gid)
+	if IsNilValue(dataRaw) {
 		return
 	}
 	data := dataRaw.(map[string]interface{})
