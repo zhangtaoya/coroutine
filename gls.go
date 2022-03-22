@@ -113,7 +113,7 @@ func GetGidByCache() uint64 {
 		return getGoidByStack()
 	}
 
-	if val, _ := addrGid.GetVal(addr); !IsNilValue(val) {
+	if val, ok := addrGid.GetVal(addr); ok && val != nil {
 		gid := val.(uint64)
 		return gid
 	}
