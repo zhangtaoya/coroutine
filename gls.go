@@ -5,13 +5,12 @@ package coroutine
 
 import (
 	"fmt"
+	"github.com/mohae/deepcopy"
 	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/mohae/deepcopy"
 
 	"github.com/zhangtaoya/coroutine/g"
 	"github.com/zhangtaoya/coroutine/logger"
@@ -48,7 +47,7 @@ func SetGlsMonitorInterval(i int) {
 }
 
 func gonumscan() {
-	for range time.Tick(time.Second * time.Duration(glsMonitorInterval)) {
+	for {
 		n := runtime.NumGoroutine()
 		peftag := "addr cache mod gid. high performance"
 		if getRoutineAddr() == 0 {
@@ -59,7 +58,7 @@ func gonumscan() {
 		} else {
 			logger.Error("NumGoroutine:%d >= gls max size:%d * 0.8, gls unsafe, plz add sz(ResetSize)(%s)", n, maxSize, peftag)
 		}
-
+		time.Sleep(time.Second * time.Duration(glsMonitorInterval))
 	}
 }
 func ResetSize(sz int) {
