@@ -18,6 +18,7 @@ import (
 )
 
 var maxSize = 100 * 1000
+var glsMonitorInterval = 10
 var addrGid *LoopBuffer
 var glsData *LoopBuffer
 var glsDataLock sync.RWMutex
@@ -39,8 +40,15 @@ func init() {
 	go gonumscan()
 }
 
+func SetGlsMonitorInterval(i int) {
+	if i <= 0 {
+		return
+	}
+	glsMonitorInterval = i
+}
+
 func gonumscan() {
-	for range time.Tick(time.Second * time.Duration(10)) {
+	for range time.Tick(time.Second * time.Duration(glsMonitorInterval)) {
 		n := runtime.NumGoroutine()
 		peftag := "addr cache mod gid. high performance"
 		if getRoutineAddr() == 0 {
