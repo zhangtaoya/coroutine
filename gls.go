@@ -13,8 +13,8 @@ import (
 
 	"github.com/mohae/deepcopy"
 
-	"git.ixiaochuan.cn/mama/server/lib/coroutine/g"
-	"git.ixiaochuan.cn/mama/server/lib/coroutine/logger"
+	"github.com/zhangtaoya/coroutine/g"
+	"github.com/zhangtaoya/coroutine/logger"
 )
 
 var maxSize = 100 * 1000
