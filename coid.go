@@ -29,6 +29,8 @@ var (
 			return &buf
 		},
 	}
+	//https://github.com/golang/go/blob/release-branch.go1.18/src/runtime/runtime2.go
+	//https://github.com/golang/go/blob/release-branch.go1.17/src/runtime/runtime2.go
 	goidOffsetDict = map[string]int64{
 		"go1.12": 152,
 		"go1.13": 152,
@@ -36,6 +38,7 @@ var (
 		"go1.15": 152,
 		"go1.16": 152,
 		"go1.17": 152,
+		"go1.18": 152,
 	}
 )
 
