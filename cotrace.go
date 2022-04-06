@@ -4,16 +4,23 @@
 package coroutine
 
 import (
+	"code.google.com/p/go-uuid/uuid"
 	"fmt"
 	"path/filepath"
 	"runtime"
 	"strings"
 )
 
-const GlsCoParentCallStackStrKey = "GlsCoParentCallStackStrKey"
+var glsCoParentCallStackStrKey = "CSKEY"
 
+func init() {
+	glsCoParentCallStackStrKey += uuid.New()
+}
+
+// 获取当前协程级联的调用堆栈，如果用该包里的方法启协程，这个堆栈会追踪到所有的父协程
+// 一个协程里面，追踪5级调用
 func GetCurCoTraceStr() (coid uint64, traceStr string) {
-	coid, traceParent, _ := GetVal(GlsCoParentCallStackStrKey)
+	coid, traceParent, _ := GetVal(glsCoParentCallStackStrKey)
 	traceParentStr := ""
 	if traceParent != nil {
 		traceParentStr = traceParent.(string)
@@ -27,22 +34,19 @@ func GetCurCoTraceStr() (coid uint64, traceStr string) {
 	return coid, traceFileWithParent
 }
 
-func SetCurCoParentTraceStr(traceStr string) {
-	SetVal(GlsCoParentCallStackStrKey, traceStr)
-}
-
-var whiteFullPathList, blackNameList []string
-var replaceMap map[string]string
-
+// 设置调用堆栈的黑白名单，以及替换名单，可选
 func SetCallStackStrFilter(whiteFullPathListIn, blackNameListIn []string, replaceMapIn map[string]string) {
 	whiteFullPathList = whiteFullPathListIn
 	blackNameList = blackNameListIn
 	replaceMap = replaceMapIn
 }
+
+// 获取直接的调用堆栈，无协程级联
 func GetCallStack(Max int) string {
 	return GetCallStackStrWithBaseLvl(Max, 3, true)
 }
 
+// 获取直接的调用堆栈，无协程级联
 func GetCallStackStrWithBaseLvl(Max, baselvl int, allFullPathOpen bool) string {
 	callStackStr := ""
 	fileNameMap := map[string]bool{}
@@ -99,3 +103,10 @@ func GetCallStackStrWithBaseLvl(Max, baselvl int, allFullPathOpen bool) string {
 	}
 	return callStackStr
 }
+
+func setCurCoParentTraceStr(traceStr string) {
+	SetVal(glsCoParentCallStackStrKey, traceStr)
+}
+
+var whiteFullPathList, blackNameList []string
+var replaceMap map[string]string

@@ -5,23 +5,14 @@ package coroutine
 
 import (
 	"fmt"
-	"github.com/mohae/deepcopy"
 	"runtime"
-	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
-
-	"github.com/zhangtaoya/coroutine/g"
-	"github.com/zhangtaoya/coroutine/logger"
 )
 
 var maxSize = 100 * 1000
 var glsMonitorInterval = 10
 var addrGid *LoopBuffer
 var glsData *LoopBuffer
-var glsDataLock sync.RWMutex
-var glblock sync.RWMutex
 
 var gidFake uint64
 
@@ -32,13 +23,53 @@ func init() {
 	addrGid.Reset(maxSize)
 	glsData.Reset(maxSize)
 	if getRoutineAddr() == 0 {
-		logger.Warn("gls using stack mode to get gid. low performance")
+		Warn("gls using stack mode to get gid. low performance")
 	} else {
-		logger.Info("gls using cache mode to get gid. high performance")
+		Info("gls using cache mode to get gid. high performance")
 	}
 	go gonumscan()
 }
 
+// coid 协程id 保证当前协程下此id是自己的，有可能会复用之前的goid，所以并不是goid
+func GetCoid() uint64 {
+	return getGidByCache()
+	//return GetGidNoCache()
+}
+
+// 设置k v
+func SetVal(k string, val interface{}) {
+	glsData.SetVal(GetCoid(), k, val)
+}
+
+// 获取k对应的数据
+func GetVal(k string) (gid uint64, val interface{}, ok bool) {
+	gid = GetCoid()
+	val, ok = glsData.GetVal(gid, k)
+	return
+}
+
+// 获取所有的gls数据，即所有kv的一个map
+func GetGlsDataCpy() (gid uint64, data map[string]interface{}, ok bool) {
+	gid = GetCoid()
+	data, ok = glsData.GetDataCpy(gid)
+	return
+}
+
+// 设置当前的gls数据，即覆盖(如果存在)之前的gls数据
+func SetGlsData(data map[string]interface{}) () {
+	glsData.SetData(GetCoid(), data)
+	return
+}
+
+// 清除当前的gls数据，在一个协程使用gls数据之前，需要先清掉(或者用SetGlsData覆盖)可能存在的残余(见GetGidByCache函数说明)，否则直接访问可能读取到之前留下的数据
+func ClearGlsData() {
+	// 设置成nil，不会删除key，让key占位复用老的位置，以优化存储
+	glsData.SetData(GetCoid(), nil)
+	//glsData.DelData(GetCoid())
+	return
+}
+
+// 可选功能。外部可以调用这个设置监控间隔，单位为秒，默认为10秒
 func SetGlsMonitorInterval(i int) {
 	if i <= 0 {
 		return
@@ -46,137 +77,32 @@ func SetGlsMonitorInterval(i int) {
 	glsMonitorInterval = i
 }
 
-func gonumscan() {
-	for {
-		n := runtime.NumGoroutine()
-		peftag := "addr cache mod gid. high performance"
-		if getRoutineAddr() == 0 {
-			peftag = "stack mode gid, low performance"
-		}
-		if n < maxSize*8/10 {
-			logger.Info("NumGoroutine:%d <  gls max size:%d * 0.8, gls safe(%s)", n, maxSize, peftag)
-		} else {
-			logger.Error("NumGoroutine:%d >= gls max size:%d * 0.8, gls unsafe, plz add sz(ResetSize)(%s)", n, maxSize, peftag)
-		}
-		time.Sleep(time.Second * time.Duration(glsMonitorInterval))
-	}
-}
+//可选功能。外部可以调用这个设置buffer大小，默认为10万，可支持10万go协程gls，超过10万会出现gls数据丢失问题。可以run不会崩，但结果不可靠
 func ResetSize(sz int) {
-	glblock.Lock()
-	defer glblock.Unlock()
-
 	maxSize = sz
 	addrGid.Reset(maxSize)
 	glsData.Reset(maxSize)
 }
 
-func getRoutineAddr() uint64 {
-	// 这个函数取的只是当前协程的一个唯一标识
-	// 用协程地址值当这个标识
-	p := g.G()
-	if p == nil {
-		return 0
+// 内部监控，不对外调用
+func gonumscan() {
+	for {
+		n := runtime.NumGoroutine()
+		addr := getRoutineAddr()
+		peftag := fmt.Sprintf("addr:0x%x cache mod gid. high performance.", addr)
+		if addr == 0 {
+			peftag = "addr:0 stack mode gid, low performance."
+		}
+		cntAddr := addrGid.Cnt
+		cntGls := glsData.Cnt
+		peftag += fmt.Sprintf("addr_cnt:%d, gls_cnt:%d", cntAddr, cntGls)
+		if n < maxSize*8/10 {
+			Info("NumGoroutine:%d <  gls max size:%d * 0.8, gls safe(%s. goidoffset:%d, Go version:%s)",
+				n, maxSize, peftag, goidOffset, goversion)
+		} else {
+			Error("NumGoroutine:%d >= gls max size:%d * 0.8, gls unsafe, plz add sz(ResetSize)(%s.  goidoffset:%d, Go version:%s)",
+				n, maxSize, peftag, goidOffset, goversion)
+		}
+		time.Sleep(time.Second * time.Duration(glsMonitorInterval))
 	}
-	x, _ := strconv.ParseUint(fmt.Sprintf("%v", p)[2:], 16, 64)
-	return x
-}
-
-// coid 协程id 保证当前协程下此id是自己的，有可能会复用之前的goid，所以并不是goid
-func GetCoid() uint64 {
-	return GetGidByCache()
-	//return GetGidNoCache()
-}
-
-func GetGidNoCache() uint64 {
-	if gid, ok := getGoidByNative(); ok {
-		return gid
-	}
-	if gid := getGoidByStack(); gid >= 0 {
-		return gid
-	}
-	return 0
-}
-
-// 以g数据地址为k，对gid做缓存。注意由于gc回收g后可能再给下一个协程用，gid会有重复使用。
-// 如果使用该方法做gls，使用tls数据前需先重置或覆盖当前gid的tls数据，直接取有可能是之前这个地址的gid留下的脏数据
-// warning: gls数据一定在该协程周期内使用，如果脱离该协程生命周期，然后再访问它的gls，有可能它的gls已经被修改
-
-// 当获取g数据地址失败时，该方法会降级为堆栈方式获取gid
-// 当获取g数据地址失败，且堆栈方式获取gid也失效时，该方法失效
-// 实际取gid时
-// 首先采用g结构获取，
-// 如果失败，则用堆栈方式获取(性能低)，但由于做了缓存，所以还好
-// 如果还失败，则返回一个内部自增的id，只要g地址不变，gid就不会变。
-func GetGidByCache() uint64 {
-	addr := getRoutineAddr()
-	if addr == 0 {
-		return getGoidByStack()
-	}
-
-	if val, ok := addrGid.GetVal(addr); ok && val != nil {
-		gid := val.(uint64)
-		return gid
-	}
-
-	if gid, ok := getGoidByNative(); ok {
-		addrGid.SetVal(addr, gid)
-		return gid
-	}
-
-	if gid := getGoidByStack(); gid >= 0 {
-		addrGid.SetVal(addr, gid)
-		return gid
-	}
-
-	//
-	gid := atomic.AddUint64(&gidFake, 1)
-	addrGid.SetVal(addr, gid)
-	return gid
-}
-
-func SetVal(k string, val interface{}) {
-	gid := GetCoid()
-
-	glsDataLock.Lock()
-	defer glsDataLock.Unlock()
-
-	dataRaw, _ := glsData.GetVal(gid)
-	if IsNilValue(dataRaw) {
-		dataRaw = make(map[string]interface{})
-	}
-
-	data := dataRaw.(map[string]interface{})
-	data[k] = val
-	glsData.SetVal(gid, data)
-}
-
-func GetVal(k string) (gid uint64, val interface{}, ok bool) {
-	gid = GetCoid()
-
-	dataRaw, _ := glsData.GetVal(gid)
-	if IsNilValue(dataRaw) {
-		return
-	}
-	data := dataRaw.(map[string]interface{})
-	val, ok = data[k]
-	return
-}
-
-func GetGlsDataCpy() (val interface{}, ok bool) {
-	gid := GetCoid()
-	val, ok = glsData.GetVal(gid)
-	val = deepcopy.Copy(val)
-	return
-}
-
-func SetGlsData(val interface{}) () {
-	gid := GetCoid()
-	glsData.SetVal(gid, val)
-	return
-}
-
-// 在一个协程使用gls数据之前，需要先清掉可能存在的残余(见GetGidByCache函数说明)
-func ClearGlsData() {
-	glsData.ClearVal(GetCoid())
-	return
 }

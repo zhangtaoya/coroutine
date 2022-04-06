@@ -8,9 +8,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
-	"github.com/zhangtaoya/coroutine/g"
+	"git.ixiaochuan.cn/mama/server/lib/coroutine/g"
 )
 
 const (
@@ -20,6 +21,7 @@ const (
 
 var (
 	goidOffset   uintptr
+	goversion    string
 	anchor       = []byte("goroutine ")
 	stackBufPool = sync.Pool{
 		New: func() interface{} {
@@ -39,9 +41,9 @@ var (
 
 func init() {
 	var off int64
-	version := runtime.Version()
+	goversion = runtime.Version()
 	for k, v := range goidOffsetDict {
-		if version == k || strings.HasPrefix(version, k) {
+		if goversion == k || strings.HasPrefix(goversion, k) {
 			off = v
 			break
 		}
@@ -153,4 +155,68 @@ func findNextGoid(buf []byte, off int) (goid uint64, next int) {
 	}
 	next = i
 	return
+}
+
+func getGidNoCache() uint64 {
+	if gid, ok := getGoidByNative(); ok {
+		return gid
+	}
+	if gid := getGoidByStack(); gid >= 0 {
+		return gid
+	}
+	return 0
+}
+
+// 以g数据地址为k，对gid做缓存。注意由于gc回收g后可能再给下一个协程用，gid会有重复使用。
+// 如果使用该方法做gls，使用tls数据前需先重置或覆盖当前gid的tls数据，直接取有可能是之前这个地址的gid留下的脏数据
+// warning: gls数据一定在该协程周期内使用，如果脱离该协程生命周期，然后再访问它的gls，有可能它的gls已经被修改
+
+// 当获取g数据地址失败时，该方法会降级为堆栈方式获取gid
+// 当获取g数据地址失败，且堆栈方式获取gid也失效时，该方法失效
+// 实际取gid时
+// 首先采用g结构获取，
+// 如果失败，则用堆栈方式获取(性能低)，但由于做了缓存，所以还好
+// 如果还失败，则返回一个内部自增的id，只要g地址不变，gid就不会变。
+func getGidByCache() uint64 {
+	// 该方法内，不要调用别的方法，因为有可能别的方法很可能会在调用本方法(比如它打日志时需要本方法获取coid)
+	// 只有容易出现死循环调用
+	coidKey := "coid"
+	addr := getRoutineAddr()
+	if addr == 0 {
+		return getGoidByStack()
+	}
+
+	if val, ok := addrGid.GetVal(addr, coidKey); ok && val != nil {
+		gid := val.(uint64)
+		return gid
+	}
+
+	if gid, ok := getGoidByNative(); ok {
+		defer Info("get new gid by native succeed, addr:0x%x, gid:%d", addr, gid)
+		addrGid.SetVal(addr, coidKey, gid)
+		return gid
+	}
+
+	if gid := getGoidByStack(); gid >= 0 {
+		defer Warn("get new gid by stack succeed, addr:0x%x, gid:%d", addr, gid)
+		addrGid.SetVal(addr, coidKey, gid)
+		return gid
+	}
+
+	gid := atomic.AddUint64(&gidFake, 1)
+	defer Warn("get new gid use fake mod, addr:0x%x, gid:%d", addr, gid)
+	addrGid.SetVal(addr, coidKey, gid)
+	return gid
+}
+
+func getRoutineAddr() uint64 {
+	// 这个函数取的只是当前协程的一个唯一标识
+	// 用协程地址值当这个标识
+	p := g.G()
+	if p == nil {
+		return 0
+	}
+	return uint64(uintptr(p))
+	//x, _ := strconv.ParseUint(fmt.Sprintf("%v", p)[2:], 16, 64)
+	//return x
 }
