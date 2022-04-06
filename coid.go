@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"git.ixiaochuan.cn/mama/server/lib/coroutine/g"
+	"github.com/zhangtaoya/coroutine/g"
 )
 
 const (
